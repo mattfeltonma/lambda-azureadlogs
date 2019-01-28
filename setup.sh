@@ -50,8 +50,6 @@ ROLE=`echo $RESULT | sed 's/"//g'`
 
 ## Create Lambda function
 ##
-lambda_function.lambda_handler
-
 
 aws lambda create-function --function-name azureadsiginlogs \
 --role $ROLE --handler signinlogs.lambda_handler \
