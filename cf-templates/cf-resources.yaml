@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Create required resources for Azure AD Sign-In and Audit Logs Storage"
+Parameters:
+  LogBucket:
+    Type: String
+    Description: 'The bucket where the logs will be placed'
+    AllowedPattern: '[a-zA-Z0-9]{1,100}'
+  KMSAdminArn:
+    Type: String
+    Description: 'The ARN of a user or role who will administer the KMS CMK'
+    AllowedPattern: 'arn:aws:iam::\d{12}:*?[a-zA-Z_0-9+=,.@\-_/]+'
+  TenantName:
+    Type: String
+    Description: 'Azure AD Tenant Name'
+
+Resources:
+  
+  #
+  # Create Lambda IAM Role
+  #
+
+  LambdaIAMRole:  
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      RoleName: "Custom-Lambda-AzureADLogs"
+
+  #
+  # Create AWS KMS CMK and an alias
+  # 
+
+  LambdaKMSCMK:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: 'CMK used to protect Azure AD client id and client secret'
+      Enabled: True
+      EnableKeyRotation: True
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: "key-default-1"
+        Statement:
+          -
+            Sid: "Allow administration of the key"
+            Effect: "Allow"
+            Principal: 
+              AWS: !Ref KMSAdminArn
+            Action:
+              - "kms:Create*"
+              - "kms:Describe*"
+              - "kms:Enable*"
+              - "kms:List*"
+              - "kms:Put*"
+              - "kms:Update*"
+              - "kms:Revoke*"
+              - "kms:Disable*"
+              - "kms:Get*"
+              - "kms:Delete*"
+              - "kms:ScheduleKeyDeletion"
+              - "kms:CancelKeyDeletion"
+            Resource: "*"
+          -
+            Sid: "Allow use of the key by Azure AD Lambda"
+            Effect: "Allow"
+            Principal:
+              AWS: !GetAtt 'LambdaIAMRole.Arn'
+            Action:
+              - "kms:Decrypt"
+            Resource: "*"
+          -
+            Sid: "Allow use of the key by human users"
+            Effect: "Allow"
+            Principal:
+              AWS: !Ref KMSAdminArn
+            Action:
+              - "kms:Encrypt"
+            Resource: "*"
+          
+
+  LambdaKMSCMKAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: "alias/azureadlogs"
+      TargetKeyId: !Ref LambdaKMSCMK
+
+  #
+  # Create SSM Standard Parameters
+  #
+
+  AzureGraphAPIBucket:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: 'The name of the S3 bucket where logs will be placed'
+      Name: 'AzureGraphAPIBucket'
+      Type: String
+      Value: !Ref LogBucket
+  
+  AzureGraphAPITenantName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: 'The name of the Azure AD tenant'
+      Name: 'AzureGraphAPITenantName'
+      Type: String
+      Value: !Ref TenantName
+  
+  AzureGraphAPISignInDays:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: 'The number of days to obtain Sign-In logs for'
+      Name: 'AzureGraphAPISignInDays'
+      Type: String
+      Value: "1"
+
+  AzureGraphAPISignInEndpoint:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: 'MS Graph API endpoint for Sign-In Logs'
+      Name: 'AzureGraphAPISignInEndpoint'
+      Type: String
+      Value: "https://graph.microsoft.com/beta/auditLogs/signIns"
+
+  AzureGraphAPIAuditLogDays:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: 'The number of days to obtain Audit logs for'
+      Name: 'AzureGraphAPIAuditLogDays'
+      Type: String
+      Value: "1"
+      
+  AzureGraphAPIAuditLogsEndpoint:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: 'MS Graph API endpoint for Audit Logs'
+      Name: 'AzureGraphAPIAuditLogsEndpoint'
+      Type: String
+      Value: "https://graph.microsoft.com/beta/auditLogs/directoryAudits"
+      
+  #
+  # Create managed IAM policy for Lambda and attach it to the role
+  #
+  AzureADLogsIAMPolicy:
+    DependsOn: LambdaKMSCMK
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: 'Custom-Lambda-AzureADLogs-Policy'
+      Description: 'This policy grants the Lambda appropriate access to KMS, S3, SSM'
+      Path: "/"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Action:
+              - "kms:Decrypt"
+            Resource: !GetAtt 'LambdaKMSCMK.Arn'
+          -
+            Effect: "Allow"
+            Action:
+              - "ssm:GetParameter"
+              - "ssm:GetParameters"
+            Resource: !Join ['', ['arn:aws:ssm:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId', ':parameter/Azure*']]
+          -
+            Effect: "Allow"
+            Action:
+              - "s3:PutObject"
+            Resource: 
+              - !Join ['', ['arn:aws:s3:::', !Ref LogBucket, "/aadsigninlogs/*"]]
+              - !Join ['', ['arn:aws:s3:::', !Ref LogBucket, "/aadauditlogs/*"]]
+      Roles:
+        - !Ref LambdaIAMRole
