@@ -175,7 +175,6 @@ Resources:
             Action:
               - "s3:PutObject"
             Resource: 
-              - !Join ['', ['arn:aws:s3:::', !Ref LogBucket, "/aadsigninlogs/*"]]
-              - !Join ['', ['arn:aws:s3:::', !Ref LogBucket, "/aadauditlogs/*"]]
+              - !Join ['', ['arn:aws:s3:::', !Ref LogBucket, "/*"]]
       Roles:
         - !Ref LambdaIAMRole
