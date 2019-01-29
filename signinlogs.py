@@ -125,7 +125,7 @@ def lambda_handler(event, context):
         elif '@odata.nextLink' in data.keys():
             del data['@odata.nextLink']
             
-        ## Cleanup the sign in logs
+        ## Cleanup the timestamps to make them importable into Athena
         ##
     
         for record in data['value']:
